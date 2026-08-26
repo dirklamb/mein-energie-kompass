@@ -350,14 +350,39 @@
     return reduceToSingleDigit(personalYear + calendarMonth);
   }
 
-  function buildYearCard(personalYear, year){
+  // --- Geburtstags-verankerte Zyklen ---
+  // Das persönliche Jahr und die persönlichen Monate beginnen nicht am 1. Januar
+  // bzw. am 1. eines Kalendermonats, sondern jeweils am Geburtstag des Nutzers.
+
+  function daysInMonth(year, month1to12){
+    return new Date(year, month1to12, 0).getDate();
+  }
+  function makeAnchorDate(year, month0based, birthDay){
+    const dim = daysInMonth(year, month0based + 1);
+    return new Date(year, month0based, Math.min(birthDay, dim));
+  }
+  function nextAnchorDate(anchor, birthDay){
+    let m = anchor.getMonth() + 1;
+    let y = anchor.getFullYear();
+    if(m > 11){ m = 0; y += 1; }
+    return makeAnchorDate(y, m, birthDay);
+  }
+  function nextYearAnchorDate(anchor, birthMonth, birthDay){
+    return makeAnchorDate(anchor.getFullYear() + 1, birthMonth - 1, birthDay);
+  }
+  function formatDateDE(date){
+    return `${date.getDate()}. ${MONTH_NAMES[date.getMonth()]}`;
+  }
+
+  function buildYearCard(personalYear, cycleStart, cycleEnd){
     const t = THEMES[personalYear];
+    const rangeLabel = `${formatDateDE(cycleStart)} ${cycleStart.getFullYear()} – ${formatDateDE(cycleEnd)} ${cycleEnd.getFullYear()}`;
     return `
       <div class="card result-card">
         <div class="rc-head">
           <div class="rc-number">${personalYear}</div>
           <div class="rc-titles">
-            <div class="rc-period">Dein persönliches Jahr ${year}</div>
+            <div class="rc-period">Dein persönliches Jahr · ${rangeLabel}</div>
             <div class="rc-theme"><span class="rc-emoji">${t.emoji}</span>${t.title}</div>
           </div>
         </div>
@@ -370,9 +395,10 @@
       </div>`;
   }
 
-  function buildMonthCard(personalMonth, monthLabel, isCurrent, delay){
+  function buildMonthCard(personalMonth, monthName, periodStart, periodEnd, isCurrent, delay){
     const t = THEMES[personalMonth];
-    const periodLabel = isCurrent ? `${monthLabel} · aktueller Monat` : monthLabel;
+    const rangeLabel = `${formatDateDE(periodStart)} – ${formatDateDE(periodEnd)} ${periodEnd.getFullYear()}`;
+    const periodLabel = `${monthName}-Energie · ${rangeLabel}${isCurrent ? ' · aktuell' : ''}`;
     return `
       <div class="card result-card" style="animation-delay:${delay}s">
         <div class="rc-head">
@@ -414,26 +440,41 @@
     const birthMonth = birthDate.getMonth() + 1;
     const birthDay = birthDate.getDate();
 
-    const currentYear = now.getFullYear();
-    const currentMonthIndex = now.getMonth(); // 0-based
-
-    const personalYear = personalYearNumber(birthMonth, birthDay, currentYear);
+    // Persönliches Jahr: Zyklus beginnt am Geburtstag, nicht am 1. Januar.
+    const thisYearAnniversary = makeAnchorDate(now.getFullYear(), birthMonth - 1, birthDay);
+    const yearCycleStart = (now.getTime() >= thisYearAnniversary.getTime())
+      ? thisYearAnniversary
+      : makeAnchorDate(now.getFullYear() - 1, birthMonth - 1, birthDay);
+    const yearCycleNext = nextYearAnchorDate(yearCycleStart, birthMonth, birthDay);
+    const yearCycleEnd = new Date(yearCycleNext.getTime() - 24 * 60 * 60 * 1000);
+    const personalYearForCurrentCycle = personalYearNumber(birthMonth, birthDay, yearCycleStart.getFullYear());
 
     let html = `<div class="section-title">Dein Jahresthema</div>`;
-    html += buildYearCard(personalYear, currentYear);
+    html += buildYearCard(personalYearForCurrentCycle, yearCycleStart, yearCycleEnd);
 
     html += `<div class="section-title">Deine nächsten 3 Monate</div>`;
 
+    // Persönlicher Monat: Zyklus beginnt jeweils am Tag des Geburtstags im Monat.
+    let periodStart = makeAnchorDate(now.getFullYear(), now.getMonth(), birthDay);
+    if(periodStart.getTime() > now.getTime()){
+      let m = now.getMonth() - 1, y = now.getFullYear();
+      if(m < 0){ m = 11; y -= 1; }
+      periodStart = makeAnchorDate(y, m, birthDay);
+    }
+
     for(let i = 0; i < 3; i++){
-      const idx = currentMonthIndex + i;
-      const monthNum1to12 = (idx % 12) + 1;
-      const yearForMonth = currentYear + Math.floor(idx / 12);
-      const py = (yearForMonth === currentYear)
-        ? personalYear
-        : personalYearNumber(birthMonth, birthDay, yearForMonth);
+      const periodEndExclusive = nextAnchorDate(periodStart, birthDay);
+      const periodEnd = new Date(periodEndExclusive.getTime() - 24 * 60 * 60 * 1000);
+
+      const monthNum1to12 = periodStart.getMonth() + 1;
+      let cycleYear = periodStart.getFullYear();
+      if(monthNum1to12 < birthMonth){ cycleYear -= 1; }
+      const py = personalYearNumber(birthMonth, birthDay, cycleYear);
       const pm = personalMonthNumber(py, monthNum1to12);
-      const label = `${MONTH_NAMES[monthNum1to12 - 1]} ${yearForMonth}`;
-      html += buildMonthCard(pm, label, i === 0, i * 0.12);
+
+      html += buildMonthCard(pm, MONTH_NAMES[monthNum1to12 - 1], periodStart, periodEnd, i === 0, i * 0.12);
+
+      periodStart = periodEndExclusive;
     }
 
     resultsEl.innerHTML = html;
